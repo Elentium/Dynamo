@@ -109,7 +109,7 @@ Both ends of a session must use the same constants for buffers to round-trip cor
 ## Serializable instances
 
 ```lua
-Dynamo.DefineSerInstanceSchema(ClassName: string, Schema: { [string]: number })
+Dynamo.DefineSerInstanceSchema(ClassName: string, Schema: { [string]: number }?)
 ```
 
 *This is slightly contradicting the library purpose (schemaless), but while developing the library, I could not find a better way to efficiently serialize instances, the main purpose of this design is to stay performant and let users choose which properties to serialize.*

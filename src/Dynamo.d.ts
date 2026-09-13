@@ -74,7 +74,7 @@ interface Dynamo {
 
 	readonly DefineSerInstanceSchema: (
 		className: string,
-		schema: { readonly [key: string]: number },
+		schema?: { readonly [key: string]: number },
 	) => void
 
 	readonly SetConstant: {

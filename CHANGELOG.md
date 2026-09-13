@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.4:
+- RefInstance maps are now plain tables (manually cleaned up)
+- Added more tests for instance serialization edge cases
+- `Dynamo.DefineSerInstanceSchema` can now accept nil values
+
 ## 1.1.3:
 - Merged pr #2 (instance attribute fetch fix)
 
@@ -15,5 +20,4 @@
 - Fixed SerInstance & Optimized its bandwidth
 
 ## 1.0.0
-
 - Initial release

@@ -2,7 +2,7 @@
 --!optimize 2
 --[[
     Dynamo 
-    [ V1.1.3 ]
+    [ V1.1.4 ]
     [ by Elentium ]
     [ Apache-2.0 license ]
 
@@ -12,7 +12,7 @@
 
     Wally: 
     ```
-    Dynamo = "elentium/dynamo@1.1.3"
+    Dynamo = "elentium/dynamo@1.1.4"
     ```
 
     Pesde:
@@ -113,7 +113,7 @@ export type Lib = {
     read Push1: (Buf: buffer, Offset: number, Value: any) -> number,
 
     read SetWriteBufferSize: (Size: number) -> (),
-    read DefineSerInstanceSchema: (ClassName: string, Schema: { [string]: number }) -> (),
+    read DefineSerInstanceSchema: (ClassName: string, Schema: { [string]: number }?) -> (),
 
     read SetConstant: (Constant: Constants, Value: any) -> (),
     read Restore: () -> (),
@@ -217,9 +217,10 @@ const SerInstance_Ser: { [string]: { Ser } } = {}
 const SerInstance_Des: { [string]: { Des } } = {}
 const SerInstance_Ids: { [string]: number } = {}
 const SerInstance_Reverse: { [number]: string } = {}
+const SerInstance_FreeIds: { number } = {}
 local SerInstanceSchemaCount = 0
-const IdMap = setmetatable({} :: { [number]: Instance }, { __mode = "v" })
-const InstanceMap = setmetatable({} :: { [Instance]: number }, { __mode = "v" })
+const IdMap = {}
+const InstanceMap = {}
 const EnumMap: { [Enum]: number } = {}
 const EnumIdMap: { [number]: Enum } = Enum:GetEnums()
 
@@ -474,8 +475,20 @@ end
 --- already names the type). Up to 255 schemas may be registered.
 --- @tag Core
 --- @param ClassName string -- Instance `ClassName` this schema applies to.
---- @param Schema { [string]: number } -- Property name → type tag id map.
-function Dynamo.DefineSerInstanceSchema(ClassName: string, Schema: { [string]: number })
+--- @param Schema { [string]: number }? -- Property name → type tag id map. Nil if the schema should be removed
+function Dynamo.DefineSerInstanceSchema(ClassName: string, Schema: { [string]: number }?)
+    if not Schema then
+        SerInstance_Des[ClassName] = nil
+        SerInstance_Ser[ClassName] = nil
+        SerInstance_Keys[ClassName] = nil
+        const Id = SerInstance_Ids[ClassName]
+        if Id then
+            SerInstance_Reverse[Id] = nil
+            SerInstance_FreeIds[#SerInstance_FreeIds + 1] = Id
+            SerInstance_Ids[ClassName] = nil
+        end
+        return
+    end
     local Idx = 0
     const Keys = {}
     for Key in Schema do
@@ -494,12 +507,20 @@ function Dynamo.DefineSerInstanceSchema(ClassName: string, Schema: { [string]: n
     SerInstance_Ser[ClassName] = SerStruct
     SerInstance_Des[ClassName] = DesStruct
     SerInstance_Keys[ClassName] = Keys
-    SerInstanceSchemaCount += 1
-    if SerInstanceSchemaCount > 255 then
-        error("Exceeded Max allowed SerInstance schema definitions(255)")
+    const FreeIds = #SerInstance_FreeIds
+    if FreeIds ~= 0 then
+        const Id = SerInstance_FreeIds[FreeIds]
+        SerInstance_FreeIds[FreeIds] = nil
+        SerInstance_Ids[ClassName] = Id
+        SerInstance_Reverse[Id] = ClassName
+    else
+        SerInstanceSchemaCount += 1
+        if SerInstanceSchemaCount > 255 then
+            error("Exceeded Max allowed SerInstance schema definitions(255)")
+        end
+        SerInstance_Ids[ClassName] = SerInstanceSchemaCount
+        SerInstance_Reverse[SerInstanceSchemaCount] = ClassName
     end
-    SerInstance_Ids[ClassName] = SerInstanceSchemaCount
-    SerInstance_Reverse[SerInstanceSchemaCount] = ClassName
 end
 
 --- Replaces a runtime configuration constant that affects inference / wire layout.
@@ -2142,10 +2163,19 @@ if RunService:IsClient() then
         InstanceMap[Descendant] = Id
     end
 
+    const function OnRemoving(Descendant: Instance): ()
+        const Id = InstanceMap[Descendant]
+        if Id then
+            IdMap[Id] = nil
+        end
+        InstanceMap[Descendant] = nil
+    end
+
     for _, Descendant in game:GetDescendants() do
         TaskSpawn(OnInstance, Descendant)
     end
     game.DescendantAdded:Connect(OnInstance)
+    game.DescendantRemoving:Connect(OnRemoving)
 else
     const FreeIds: { number } = {}
     local FreeIdsCount = 0
@@ -2178,10 +2208,11 @@ else
     const function OnRemoving(Descendant: Instance): ()
         const Id = InstanceMap[Descendant]
         if Id then
+            IdMap[Id] = nil
             table.insert(FreeIds, Id)
             FreeIdsCount += 1
         end
-        -- the entries are cleaned up automatically
+        InstanceMap[Descendant] = nil
     end
 
     for _, Descendant in game:GetDescendants() do

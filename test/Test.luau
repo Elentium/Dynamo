@@ -67,6 +67,28 @@ const function RunPackedTest(
 	}))
 end
 
+const function RunCase(Name: string, Fn: () -> ())
+	local Valid = false
+	const Ok, Result = pcall(function()
+		Fn()
+		Valid = true
+	end)
+	if not Ok then
+		warn(`[{Name}] {tostring(Result)}`)
+	end
+	AddTest({
+		Name = Name,
+		Valid = Ok and Valid,
+	})
+end
+
+const function ExpectError(Fn: () -> (), Message: string)
+	const Ok = pcall(Fn)
+	if Ok then
+		error(Message)
+	end
+end
+
 const function PrintResults()
 	print(Separator)
 	print("* DYNAMO TEST RESULTS")
@@ -244,6 +266,94 @@ const function Test(Log: boolean?): TestTypes.Results
 	Dynamo.SetConstant("DoMapCompute", true)
 	RunTest("Map8 (DoMapCompute restore)", { [100] = 2, [200] = 4 }, 1 + 1 + 2 * 4, function(A, B)
 		return TestHelper.MapsEq(A, B, TestHelper.NumbersEq)
+	end)
+
+	Section("Instance edge cases")
+	Dynamo.DefineSerInstanceSchema("Folder", {
+		Name = T.Str8,
+	})
+
+	Dynamo.SetConstant("SerInstanceSerialization", true)
+	Dynamo.SetConstant("InstanceRefMode", "Normal")
+
+	const LoosePart = Instance.new("Part")
+	LoosePart.Name = "NotInSchema"
+	LoosePart.Anchored = true
+	LoosePart.Size = Vector3.new(4, 2, 1)
+	LoosePart.Color = TestColor3
+	-- tag + schemaId + Color(3) + Size(12)
+	RunTest("SerInstance unparented Part", LoosePart, 1 + 1 + 3 + 12, function(A, B)
+		return A ~= B
+			and B.Parent == nil
+			and A.ClassName == B.ClassName
+			and TestHelper.Vector3sEq(A.Size, B.Size)
+			and TestHelper.Color3sEq(A.Color, B.Color)
+	end)
+
+	RunCase("SerInstance drops unschematized properties", function()
+		const Decoded = Deserialize1(Dynamo.Serialize1(LoosePart))
+		if Decoded.Name == "NotInSchema" then
+			error("Name was copied despite not being in the Part schema")
+		end
+		if Decoded.Anchored then
+			error("Anchored was copied despite not being in the Part schema")
+		end
+	end)
+
+	RunCase("SerInstance unknown class errors", function()
+		const Unknown = Instance.new("Configuration")
+		ExpectError(function()
+			Dynamo.Serialize1(Unknown)
+		end, "expected missing SerInstance schema to error")
+		Unknown:Destroy()
+	end)
+
+	const LooseFolder = Instance.new("Folder")
+	LooseFolder.Name = "edge"
+	RunTest("SerInstance Folder Name", LooseFolder, 1 + 1 + 1 + 4, function(A, B)
+		return A ~= B and B.ClassName == "Folder" and B.Name == "edge"
+	end)
+
+	RunCase("SerInstance invalid schema id errors", function()
+		const Buf = buffer.create(2)
+		buffer.writeu8(Buf, 0, T.SerInstance)
+		buffer.writeu8(Buf, 1, 255)
+		ExpectError(function()
+			Deserialize1(Buf)
+		end, "expected invalid SerInstance id to error")
+	end)
+
+	LoosePart:Destroy()
+	LooseFolder:Destroy()
+
+	Dynamo.SetConstant("SerInstanceSerialization", false)
+
+	RunCase("RefInstance unmapped instance errors", function()
+		const Ghost = Instance.new("Part")
+		ExpectError(function()
+			Dynamo.Serialize1(Ghost)
+		end, "expected unmapped RefInstance serialize to error")
+		Ghost:Destroy()
+	end)
+
+	RunCase("RefInstance id recycle after destroy", function()
+		const First = Instance.new("Part")
+		First.Parent = workspace
+		task.wait()
+
+		const Buf = Dynamo.Serialize1(First)
+		First:Destroy()
+
+		const Second = Instance.new("Part")
+		Second.Parent = workspace
+		task.wait()
+
+		const Decoded = Deserialize1(Buf)
+		if Decoded ~= Second then
+			Second:Destroy()
+			error("expected recycled RefInstance id to resolve to the replacement")
+		end
+		Second:Destroy()
 	end)
 
 	if Log then
